@@ -17,9 +17,9 @@ enum CPSValuePrimitive(name: String) {
 
   case ShiftLeft extends CPSValuePrimitive("shift-left")
   case ShiftRight extends CPSValuePrimitive("shift-right")
-  case And extends CPSValuePrimitive("and")
-  case Or extends CPSValuePrimitive("or")
-  case XOr extends CPSValuePrimitive("xor")
+  case And extends CPSValuePrimitive("and") // bitwise
+  case Or extends CPSValuePrimitive("or")   // bitwise
+  case XOr extends CPSValuePrimitive("xor") // bitwise
 
   case ByteRead extends CPSValuePrimitive("byte-read")
   case ByteWrite extends CPSValuePrimitive("byte-write")
