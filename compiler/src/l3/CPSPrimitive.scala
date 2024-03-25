@@ -23,8 +23,8 @@ enum CPSValuePrimitive(name: String) {
 
   case ByteRead extends CPSValuePrimitive("byte-read")
   case ByteWrite extends CPSValuePrimitive("byte-write")
-  case BlockAlloc extends CPSValuePrimitive("block-alloc")
 
+  case BlockAlloc extends CPSValuePrimitive("block-alloc")
   case BlockTag extends CPSValuePrimitive("block-tag")
   case BlockLength extends CPSValuePrimitive("block-length")
   case BlockGet extends CPSValuePrimitive("block-get")
