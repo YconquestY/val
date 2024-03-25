@@ -205,11 +205,11 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
         t1 => L.LetP(n, CPSV.ByteWrite, Seq(t1), h2lVal(body))
       })
     // integer and character conversion
-    // int->char
-    case H.LetP(n: H.Name, L3.IntToChar, Seq(a: H.Atom), body: H.Body) =>
-      L.LetP(n, CPSV.ShiftRight, Seq(rewrite(a), 2), h2lVal(body))
     // char->int
     case H.LetP(n: H.Name, L3.CharToInt, Seq(a: H.Atom), body: H.Body) =>
+      L.LetP(n, CPSV.ShiftRight, Seq(rewrite(a), 2), h2lVal(body))
+    // int->char
+    case H.LetP(n: H.Name, L3.IntToChar, Seq(a: H.Atom), body: H.Body) =>
       tmpLetP(CPSV.ShiftLeft, Seq(rewrite(a), 2), {
         t1 => L.LetP(n, CPSV.Or, Seq(t1, 0x2), h2lVal(body))
       })
