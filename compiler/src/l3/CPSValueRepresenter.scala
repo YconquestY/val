@@ -7,6 +7,7 @@ import l3.{ CPSValuePrimitive as CPSV }
 import l3.{ CPSTestPrimitive  as CPST }
 import CL3Literal._
 import BlockTag._
+//import l3.CPSTreeModule.Tree
 
 object CPSValueRepresenter extends (H.Tree => L.Tree) {
   def apply(tree: H.Tree): L.Tree =
@@ -14,13 +15,39 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
 
   private def h2lVal(tree: H.Tree): L.Tree = {
     
-    //def substitute(tree: L.Tree): 
+    def substitute(tree: L.Tree)(using mappings: Subst[Symbol]): L.Tree = {
+      def rewriteAtom(a: L.Atom): L.Atom = a match {
+        case a: L.Literal => a
+        case a: L.Name    => mappings(a)
+      }
+      def rewriteCnt(c: L.Cnt) = c match {
+        case L.Cnt(name, args, body) =>
+          L.Cnt(name, args, substitute(body))
+      }
+
+      tree match {
+        case L.LetP(name, prim, args, body) =>
+          L.LetP(name, prim, args.map(rewriteAtom(_)), substitute(body))
+        case L.LetC(cnts, body) =>
+          L.LetC(cnts.map(rewriteCnt(_)), substitute(body))
+        case L.LetF(funs, body) =>
+          L.LetF(funs, substitute(body))
+        case L.AppC(c, args) =>
+          L.AppC(c, args.map(rewriteAtom(_)))
+        case L.AppF(f, retC, args) =>
+          L.AppF(rewriteAtom(f), retC, args.map(rewriteAtom(_)))
+        case L.If(cond, args, thenC, elseC) =>
+          L.If(cond, args.map(rewriteAtom(_)), thenC, elseC)
+        case L.Halt(a) =>
+          L.Halt(rewriteAtom(a))
+      }
+    }
     
     def extractEnv(env: Symbol, body: H.Tree)
                   (substitutions: Subst[Symbol], fvs: Seq[Symbol]): L.Tree =
       fvs match {
         case Seq() =>
-          h2lVal(body)(substitutions ++ _substitutions)
+          substitute(h2lVal(body))(using substitutions)
         case fv +: fvs =>
           tmpLetP(CPSV.BlockGet, Seq(env, substitutions.size), { // `substition` is initially "f -> env" with size 1.
             (v: L.Name) => extractEnv(env, body)(substitutions + (fv -> v), fvs)
