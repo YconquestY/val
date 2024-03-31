@@ -18,7 +18,7 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
                   (substitutions: Subst[Symbol], fvs: Seq[Symbol]): L.Tree =
       fvs match {
         case Seq() =>
-          h2lVal(body)(substitutions)
+          h2lVal(body)(substitutions ++ _substitutions)
         case fv +: fvs =>
           tmpLetP(CPSV.BlockGet, Seq(env, substitutions.size), { // `substition` is initially "f -> env" with size 1.
             (v: L.Name) => extractEnv(env, body)(substitutions + (fv -> v), fvs)
@@ -265,23 +265,23 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
 
   private def fv(tree: H.Tree): Set[Symbol] = tree match {
     case H.LetP(n: H.Name, _, args: Seq[H.Atom], b: H.Body) =>
-      (fv(b) excl n) union args.map(fvAtom(_)).fold(Set.empty[Symbol])(_ union _)
+      (fv(b) excl n) union args.flatMap(fvAtom(_)).toSet
     case H.LetC(cnts: Seq[H.Cnt], body: H.Body) =>
-      fv(body) union cnts.map {
+      fv(body) union cnts.flatMap {
         case H.Cnt(_, args: Seq[H.Name], e: H.Body) =>
           fv(e) diff args.toSet
-      }.fold(Set.empty[Symbol])(_ union _)
+      }.toSet
     case H.LetF(funs: Seq[H.Fun], body: H.Body) =>
-      fv(body) union funs.map {
+      fv(body) union funs.flatMap {
         case H.Fun(_, _ ,args: Seq[H.Name], e: H.Body) =>
           fv(e) diff args.toSet
-      }.fold(Set.empty[Symbol])(_ union _) diff funs.map(_.name).toSet // Must `diff` lie on the same line as operands?
+      }.toSet diff funs.map(_.name).toSet // Must `diff` lie on the same line as operands?
     case H.AppC(_, args: Seq[H.Atom]) =>
-      args.map(fvAtom(_)).fold(Set.empty[Symbol])(_ union _)
+      args.flatMap(fvAtom(_)).toSet
     case H.AppF(fun: H.Atom, _, args: Seq[H.Atom]) =>
-      fvAtom(fun) union args.map(fvAtom(_)).fold(Set.empty[Symbol])(_ union _)
+      fvAtom(fun) union args.flatMap(fvAtom(_)).toSet
     case H.If(_, args: Seq[H.Atom], _, _) =>
-      args.map(fvAtom(_)).fold(Set.empty[Symbol])(_ union _)
+      args.flatMap(fvAtom(_)).toSet
     case H.Halt(a: H.Atom) =>
       fvAtom(a)
   }
