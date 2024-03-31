@@ -10,9 +10,11 @@ import BlockTag._
 
 object CPSValueRepresenter extends (H.Tree => L.Tree) {
   def apply(tree: H.Tree): L.Tree =
-    h2lVal(tree)(emptySubst[Symbol])
+    h2lVal(tree)
 
-  private def h2lVal(tree: H.Tree)(_substitutions: Subst[Symbol]): L.Tree = {
+  private def h2lVal(tree: H.Tree): L.Tree = {
+    
+    //def substitute(tree: L.Tree): 
     
     def extractEnv(env: Symbol, body: H.Tree)
                   (substitutions: Subst[Symbol], fvs: Seq[Symbol]): L.Tree =
@@ -29,10 +31,10 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
       case H.LetC(cnts: Seq[H.Cnt], body: H.Body) =>
         L.LetC(cnts.map {
             case H.Cnt(name, args, e) =>
-              L.Cnt(name, args, h2lVal(e)(_substitutions))
-        }, h2lVal(body)(_substitutions))
+              L.Cnt(name, args, h2lVal(e) )
+        }, h2lVal(body) )
       case H.AppC(cnt: H.Name, args: Seq[H.Atom]) =>
-        L.AppC(cnt, args.map(rewrite(_)(_substitutions)))
+        L.AppC(cnt, args.map(rewrite(_)))
       // function
       // not improved yet!
       case H.LetF(funs: Seq[H.Fun], body: H.Body) => {
@@ -47,7 +49,7 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
           }
         }.unzip
 
-        var WIP: L.Tree = h2lVal(body)(_substitutions)
+        var WIP: L.Tree = h2lVal(body) 
         for ((f, (w, fvs)) <- mappings) {
           for ((fv, index) <- fvs.zipWithIndex) {
             WIP = L.LetP(Symbol.fresh("t"), CPSV.BlockSet, Seq(f, index + 1, fv), WIP)
@@ -62,28 +64,28 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
       }
       case H.AppF(fun: H.Name, retC: H.Name, args: Seq[H.Atom]) => {
         val f = Symbol.fresh("f")
-        val rewrittenFun = rewrite(fun)(_substitutions)
+        val rewrittenFun = rewrite(fun)
         L.LetP(f, CPSV.BlockGet, Seq(rewrittenFun, 0),
-               L.AppF(f, retC, rewrittenFun +: args.map(rewrite(_)(_substitutions))))
+               L.AppF(f, retC, rewrittenFun +: args.map(rewrite(_))))
       }
       // arithmetics
       // +
       case H.LetP(n: H.Name, L3.IntAdd, Seq(x: H.Atom, y: H.Atom), b: H.Body) =>
-        tmpLetP(CPSV.XOr, Seq(rewrite(x)(_substitutions), 1), {
-          _x => L.LetP(n, CPSV.Add, Seq(_x, rewrite(y)(_substitutions)), h2lVal(b)(_substitutions))
+        tmpLetP(CPSV.XOr, Seq(rewrite(x), 1), {
+          _x => L.LetP(n, CPSV.Add, Seq(_x, rewrite(y)), h2lVal(b) )
         })
       // TODO: change (- 1) to (XOR 1) to clear LSB
       // -
       case H.LetP(n: H.Name, L3.IntSub, Seq(x: H.Atom, y: H.Atom), b: H.Body) =>
-        tmpLetP(CPSV.Sub, Seq(rewrite(x)(_substitutions), rewrite(y)(_substitutions)), {
-          _x => L.LetP(n, CPSV.Add, Seq(_x, 1), h2lVal(b)(_substitutions))
+        tmpLetP(CPSV.Sub, Seq(rewrite(x), rewrite(y)), {
+          _x => L.LetP(n, CPSV.Add, Seq(_x, 1), h2lVal(b) )
         })
       // ×
       case H.LetP(n: H.Name, L3.IntMul, Seq(x: H.Atom, y: H.Atom), b: H.Body) => {
-        tmpLetP(CPSV.Sub, Seq(rewrite(x)(_substitutions), 1), {
-          _x => tmpLetP(CPSV.ShiftRight, Seq(rewrite(y)(_substitutions), 1), {
+        tmpLetP(CPSV.Sub, Seq(rewrite(x), 1), {
+          _x => tmpLetP(CPSV.ShiftRight, Seq(rewrite(y), 1), {
             _y => tmpLetP(CPSV.Mul, Seq(_x, _y), {
-              z => L.LetP(n, CPSV.Add, Seq(z, 1), h2lVal(b)(_substitutions))
+              z => L.LetP(n, CPSV.Add, Seq(z, 1), h2lVal(b) )
             })
           })
         })
@@ -91,11 +93,11 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
       // ÷
       // ⟦n ÷ m⟧ = 2 × ( (⟦n⟧ - 1) / (⟦m⟧ - 1) ) + 1
       case H.LetP(n: H.Name, L3.IntDiv, Seq(x: H.Atom, y: H.Atom), b: H.Body) => {
-        tmpLetP(CPSV.Sub, Seq(rewrite(x)(_substitutions), 1), {
-          _x => tmpLetP(CPSV.Sub, Seq(rewrite(y)(_substitutions), 1), {
+        tmpLetP(CPSV.Sub, Seq(rewrite(x), 1), {
+          _x => tmpLetP(CPSV.Sub, Seq(rewrite(y), 1), {
             _y => tmpLetP(CPSV.Div, Seq(_x, _y), {
               z => tmpLetP(CPSV.Mul, Seq(z, 2), {
-                z2 => L.LetP(n, CPSV.Add, Seq(z2, 1), h2lVal(b)(_substitutions))
+                z2 => L.LetP(n, CPSV.Add, Seq(z2, 1), h2lVal(b) )
               })
             })
           })
@@ -104,151 +106,151 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
       // %
       // ⟦n MOD m⟧ = (⟦n⟧ - 1 MOD ⟦m⟧ - 1) + 1
       case H.LetP(n: H.Name, L3.IntMod, Seq(x: H.Atom, y: H.Atom), b: H.Body) => {
-        tmpLetP(CPSV.Sub, Seq(rewrite(x)(_substitutions), 1), {
-          _x => tmpLetP(CPSV.Sub, Seq(rewrite(y)(_substitutions), 1), {
+        tmpLetP(CPSV.Sub, Seq(rewrite(x), 1), {
+          _x => tmpLetP(CPSV.Sub, Seq(rewrite(y), 1), {
             _y => tmpLetP(CPSV.Mod, Seq(_x, _y), {
-              z => L.LetP(n, CPSV.Add, Seq(z, 1), h2lVal(b)(_substitutions))
+              z => L.LetP(n, CPSV.Add, Seq(z, 1), h2lVal(b) )
             })
           })
         })
       }
       // <<
       case H.LetP(n: H.Name, L3.IntShiftLeft, Seq(x: H.Atom, y: H.Atom), b: H.Body) => {
-        tmpLetP(CPSV.Sub, Seq(rewrite(x)(_substitutions), 1), {
-          _x => tmpLetP(CPSV.ShiftRight, Seq(rewrite(y)(_substitutions), 1), { // Right-shifting ⟦y⟧ already clears LSB.
+        tmpLetP(CPSV.Sub, Seq(rewrite(x), 1), {
+          _x => tmpLetP(CPSV.ShiftRight, Seq(rewrite(y), 1), { // Right-shifting ⟦y⟧ already clears LSB.
             _y => tmpLetP(CPSV.ShiftLeft, Seq(_x, _y), {
-              z => L.LetP(n, CPSV.Or, Seq(z, 1), h2lVal(b)(_substitutions)) // equivalent to adding 1
+              z => L.LetP(n, CPSV.Or, Seq(z, 1), h2lVal(b) ) // equivalent to adding 1
             })
           })
         })
       }
       // >>
       case H.LetP(n: H.Name, L3.IntShiftRight, Seq(x: H.Atom, y: H.Atom), b: H.Body) => {
-        tmpLetP(CPSV.ShiftRight, Seq(rewrite(y)(_substitutions), 1), {
-          _y => tmpLetP(CPSV.ShiftRight, Seq(rewrite(x)(_substitutions), _y), {
-            z => L.LetP(n, CPSV.Or, Seq(z, 1), h2lVal(b)(_substitutions))
+        tmpLetP(CPSV.ShiftRight, Seq(rewrite(y), 1), {
+          _y => tmpLetP(CPSV.ShiftRight, Seq(rewrite(x), _y), {
+            z => L.LetP(n, CPSV.Or, Seq(z, 1), h2lVal(b) )
           })
         })
       }
       // &
       case H.LetP(n: H.Name, L3.IntBitwiseAnd, Seq(x: H.Atom, y: H.Atom), b: H.Body) => {
-        L.LetP(n, CPSV.And, Seq(rewrite(x)(_substitutions), rewrite(y)(_substitutions)), h2lVal(b)(_substitutions))
+        L.LetP(n, CPSV.And, Seq(rewrite(x), rewrite(y)), h2lVal(b) )
       }
       // |
       case H.LetP(n: H.Name, L3.IntBitwiseOr, Seq(x: H.Atom, y: H.Atom), b: H.Body) => {
-        L.LetP(n, CPSV.Or, Seq(rewrite(x)(_substitutions), rewrite(y)(_substitutions)), h2lVal(b)(_substitutions))
+        L.LetP(n, CPSV.Or, Seq(rewrite(x), rewrite(y)), h2lVal(b) )
       }
       // ^
       case H.LetP(n: H.Name, L3.IntBitwiseXOr, Seq(x: H.Atom, y: H.Atom), b: H.Body) => {
-        tmpLetP(CPSV.XOr, Seq(rewrite(x)(_substitutions), rewrite(y)(_substitutions)), {
-          z => L.LetP(n, CPSV.Or, Seq(z, 1), h2lVal(b)(_substitutions))
+        tmpLetP(CPSV.XOr, Seq(rewrite(x), rewrite(y)), {
+          z => L.LetP(n, CPSV.Or, Seq(z, 1), h2lVal(b) )
         })
       }
       // id
       case H.LetP(n: H.Name, L3.Id, Seq(a: H.Atom), b: H.Body) => {
-        L.LetP(n, CPSV.Id, Seq(rewrite(a)(_substitutions)), h2lVal(b)(_substitutions))
+        L.LetP(n, CPSV.Id, Seq(rewrite(a)), h2lVal(b))
       }
       // Comparison
       // <
       case H.If(L3.IntLt, args: Seq[H.Atom], thenC: H.Name, elseC: H.Name) =>
-        L.If(CPST.Lt, args.map(rewrite(_)(_substitutions)), thenC, elseC)
+        L.If(CPST.Lt, args.map(rewrite(_)), thenC, elseC)
       // ≤
       case H.If(L3.IntLe, args: Seq[H.Atom], thenC: H.Name, elseC: H.Name) =>
-        L.If(CPST.Le, args.map(rewrite(_)(_substitutions)), thenC, elseC)
+        L.If(CPST.Le, args.map(rewrite(_)), thenC, elseC)
       // =
       case H.If(L3.Eq, args: Seq[H.Atom], thenC: H.Name, elseC: H.Name) =>
-        L.If(CPST.Eq, args.map(rewrite(_)(_substitutions)), thenC, elseC)
+        L.If(CPST.Eq, args.map(rewrite(_)), thenC, elseC)
       // Type check
       // int?
       case H.If(L3.IntP, Seq(a: H.Atom), thenC: H.Name, elseC: H.Name) =>
-        tmpLetP(CPSV.And, Seq(rewrite(a)(_substitutions), 1), {
+        tmpLetP(CPSV.And, Seq(rewrite(a), 1), {
           t1 => L.If(CPST.Eq, Seq(t1, 1), thenC, elseC)
         })
       // block?
       case H.If(L3.BlockP, Seq(a: H.Atom), thenC: H.Name, elseC: H.Name) =>
-        tmpLetP(CPSV.And, Seq(rewrite(a)(_substitutions), 0x3), {
+        tmpLetP(CPSV.And, Seq(rewrite(a), 0x3), {
           t1 => L.If(CPST.Eq, Seq(t1, 0), thenC, elseC)
         })
       // char?
       case H.If(L3.CharP, Seq(a: H.Atom), thenC: H.Name, elseC: H.Name) =>
-        tmpLetP(CPSV.And, Seq(rewrite(a)(_substitutions), 0x7), {
+        tmpLetP(CPSV.And, Seq(rewrite(a), 0x7), {
           t1 => L.If(CPST.Eq, Seq(t1, 6), thenC, elseC)
         })
       // bool?
       case H.If(L3.BoolP, Seq(a: H.Atom), thenC: H.Name, elseC: H.Name) => 
-        tmpLetP(CPSV.And, Seq(rewrite(a)(_substitutions), 0xF), {
+        tmpLetP(CPSV.And, Seq(rewrite(a), 0xF), {
           t1 => L.If(CPST.Eq, Seq(t1, 10), thenC, elseC)
         })
       // unit?
       case H.If(L3.UnitP, Seq(a: H.Atom), thenC: H.Name, elseC: H.Name) =>
-        tmpLetP(CPSV.And, Seq(rewrite(a)(_substitutions), 0xF), {
+        tmpLetP(CPSV.And, Seq(rewrite(a), 0xF), {
           t1 => L.If(CPST.Eq, Seq(t1, 2), thenC, elseC)
         })
       // block operations
       // block-alloc
       case H.LetP(n: H.Name, L3.BlockAlloc, Seq(a1, a2), body: H.Body) => {
-        tmpLetP(CPSV.ShiftRight, Seq(rewrite(a1)(_substitutions), 1), {
-          t1 => tmpLetP(CPSV.ShiftRight, Seq(rewrite(a2)(_substitutions), 1), {
-            t2 => L.LetP(n, CPSV.BlockAlloc, Seq(t1, t2), h2lVal(body)(_substitutions))
+        tmpLetP(CPSV.ShiftRight, Seq(rewrite(a1), 1), {
+          t1 => tmpLetP(CPSV.ShiftRight, Seq(rewrite(a2), 1), {
+            t2 => L.LetP(n, CPSV.BlockAlloc, Seq(t1, t2), h2lVal(body))
           })
         })
       }
       // block-tag
       case H.LetP(n: H.Name, L3.BlockTag, Seq(a: H.Atom), body: H.Body) =>
-        tmpLetP(CPSV.BlockTag, Seq(rewrite(a)(_substitutions)), {
+        tmpLetP(CPSV.BlockTag, Seq(rewrite(a)), {
           t1 => tmpLetP(CPSV.ShiftLeft, Seq(t1, 1), {
-            t2 => L.LetP(n, CPSV.Or, Seq(t2, 1), h2lVal(body)(_substitutions))
+            t2 => L.LetP(n, CPSV.Or, Seq(t2, 1), h2lVal(body))
           })
         })
       // block-length
       case H.LetP(n: H.Name, L3.BlockLength, Seq(a: H.Atom), body: H.Body) =>
-        tmpLetP(CPSV.BlockLength, Seq(rewrite(a)(_substitutions)), {
+        tmpLetP(CPSV.BlockLength, Seq(rewrite(a)), {
           t1 => tmpLetP(CPSV.ShiftLeft, Seq(t1, 1), {
-            t2 => L.LetP(n, CPSV.Or, Seq(t2, 1), h2lVal(body)(_substitutions))
+            t2 => L.LetP(n, CPSV.Or, Seq(t2, 1), h2lVal(body))
           })
         })
       // block-get
       case H.LetP(n: H.Name, L3.BlockGet, Seq(b: H.Atom, i: H.Atom), body: H.Body) =>
-        tmpLetP(CPSV.ShiftRight, Seq(rewrite(i)(_substitutions), 1), {
-          _i => L.LetP(n, CPSV.BlockGet, Seq(rewrite(b)(_substitutions), _i), h2lVal(body)(_substitutions)) // need to untag returned element?
+        tmpLetP(CPSV.ShiftRight, Seq(rewrite(i), 1), {
+          _i => L.LetP(n, CPSV.BlockGet, Seq(rewrite(b), _i), h2lVal(body)) // need to untag returned element?
         })
       // block-set!
       case H.LetP(n: H.Name, L3.BlockSet, Seq(b: H.Atom, i: H.Atom, v: H.Atom), body: H.Body) =>
-        tmpLetP(CPSV.ShiftRight, Seq(rewrite(i)(_substitutions), 1), {
-          _i => L.LetP(n, CPSV.BlockSet, Seq(rewrite(b)(_substitutions), _i, rewrite(v)(_substitutions)), h2lVal(body)(_substitutions))
+        tmpLetP(CPSV.ShiftRight, Seq(rewrite(i), 1), {
+          _i => L.LetP(n, CPSV.BlockSet, Seq(rewrite(b), _i, rewrite(v)), h2lVal(body))
         })
       // I/O
       // byte-read
       case H.LetP(n: H.Name, L3.ByteRead, Seq(), body: H.Body) =>
         tmpLetP(CPSV.ByteRead, Seq.empty[L.Atom], {
           t1 => tmpLetP(CPSV.ShiftLeft, Seq(t1, 1), {
-            t2 => L.LetP(n, CPSV.Or, Seq(t2, 1), h2lVal(body)(_substitutions))
+            t2 => L.LetP(n, CPSV.Or, Seq(t2, 1), h2lVal(body))
           })
         })
       // byte-write
       case H.LetP(n: H.Name, L3.ByteWrite, Seq(a: H.Atom), body: H.Body) =>
-        tmpLetP(CPSV.ShiftRight, Seq(rewrite(a)(_substitutions), 1), {
-          t1 => L.LetP(n, CPSV.ByteWrite, Seq(t1), h2lVal(body)(_substitutions))
+        tmpLetP(CPSV.ShiftRight, Seq(rewrite(a), 1), {
+          t1 => L.LetP(n, CPSV.ByteWrite, Seq(t1), h2lVal(body))
         })
       // integer and character conversion
       // char->int
       case H.LetP(n: H.Name, L3.CharToInt, Seq(a: H.Atom), body: H.Body) =>
-        L.LetP(n, CPSV.ShiftRight, Seq(rewrite(a)(_substitutions), 2), h2lVal(body)(_substitutions))
+        L.LetP(n, CPSV.ShiftRight, Seq(rewrite(a), 2), h2lVal(body))
       // int->char
       case H.LetP(n: H.Name, L3.IntToChar, Seq(a: H.Atom), body: H.Body) =>
-        tmpLetP(CPSV.ShiftLeft, Seq(rewrite(a)(_substitutions), 2), {
-          t1 => L.LetP(n, CPSV.Or, Seq(t1, 0x2), h2lVal(body)(_substitutions))
+        tmpLetP(CPSV.ShiftLeft, Seq(rewrite(a), 2), {
+          t1 => L.LetP(n, CPSV.Or, Seq(t1, 0x2), h2lVal(body))
         })
       // halt
       case H.Halt(arg: H.Atom) => 
-        tmpLetP(CPSV.ShiftRight, Seq(rewrite(arg)(_substitutions), 1), {
+        tmpLetP(CPSV.ShiftRight, Seq(rewrite(arg), 1), {
           _a => L.Halt(_a)
         })
     }
   }
   
-  private def rewrite(a: H.Atom)(substitutions: Subst[Symbol]): L.Atom = a match {
-    case n: H.Name     => substitutions(n)
+  private def rewrite(a: H.Atom): L.Atom = a match {
+    case n: H.Name     => n
     case IntLit(v)     => (v.toInt << 1) | 1 // equivalent to `v * 2 + 1`
     case CharLit(c)    => (c.toInt << 3) | 6 // 0b110
     case BooleanLit(b) => if (b) 0x1A else 0xA
