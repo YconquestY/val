@@ -265,23 +265,23 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
 
   private def fv(tree: H.Tree): Set[Symbol] = tree match {
     case H.LetP(n: H.Name, _, args: Seq[H.Atom], b: H.Body) =>
-      (fv(b) excl n) union args.map(fvAtom(_)).reduce(_ union _)
+      (fv(b) excl n) union args.map(fvAtom(_)).fold(Set.empty[Symbol])(_ union _)
     case H.LetC(cnts: Seq[H.Cnt], body: H.Body) =>
       fv(body) union cnts.map {
         case H.Cnt(_, args: Seq[H.Name], e: H.Body) =>
           fv(e) diff args.toSet
-      }.reduce(_ union _)
+      }.fold(Set.empty[Symbol])(_ union _)
     case H.LetF(funs: Seq[H.Fun], body: H.Body) =>
       fv(body) union funs.map {
         case H.Fun(_, _ ,args: Seq[H.Name], e: H.Body) =>
           fv(e) diff args.toSet
-      }.reduce(_ union _) diff funs.map(_.name).toSet // Must `diff` lie on the same line as operands?
+      }.fold(Set.empty[Symbol])(_ union _) diff funs.map(_.name).toSet // Must `diff` lie on the same line as operands?
     case H.AppC(_, args: Seq[H.Atom]) =>
-      args.map(fvAtom(_)).reduce(_ union _)
+      args.map(fvAtom(_)).fold(Set.empty[Symbol])(_ union _)
     case H.AppF(fun: H.Atom, _, args: Seq[H.Atom]) =>
-      fvAtom(fun) union args.map(fvAtom(_)).reduce(_ union _)
+      fvAtom(fun) union args.map(fvAtom(_)).fold(Set.empty[Symbol])(_ union _)
     case H.If(_, args: Seq[H.Atom], _, _) =>
-      args.map(fvAtom(_)).reduce(_ union _)
+      args.map(fvAtom(_)).fold(Set.empty[Symbol])(_ union _)
     case H.Halt(a: H.Atom) =>
       fvAtom(a)
   }
