@@ -1,5 +1,7 @@
 package l3
 
+import scala.collection.mutable.{ Map => MMap }
+
 import l3.{ HighCPSTreeModule as H }
 import l3.{ LowCPSTreeModule  as L }
 import l3.{ L3Primitive as L3 }
@@ -11,10 +13,19 @@ import BlockTag._
 
 object CPSValueRepresenter extends (H.Tree => L.Tree) {
   def apply(tree: H.Tree): L.Tree =
-    h2lVal(tree)
-
-  private def h2lVal(tree: H.Tree): L.Tree = {
-    
+    h2lVal(tree)(using Map.empty[Symbol, Set[Symbol]],
+                       emptySubst[Symbol])
+  /**
+    * 
+    *
+    * @param tree
+    * @param f2fvs immutable map from "knwon" function to free variables
+    * @param f2w   map from "known" function to worker
+    * @return
+    */
+  private def h2lVal(tree: H.Tree)
+                    (using f2fvs: Map[Symbol, Set[Symbol]], // immutable!
+                           f2w  : Subst[Symbol]): L.Tree = { 
     def substitute(tree: L.Tree)(using mappings: Subst[Symbol]): L.Tree = {
       def rewriteAtom(a: L.Atom): L.Atom = a match {
         case a: L.Literal => a
@@ -63,8 +74,10 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
       case H.AppC(cnt: H.Name, args: Seq[H.Atom]) =>
         L.AppC(cnt, args.map(rewrite(_)))
       // function
-      // not improved yet!
       case H.LetF(funs: Seq[H.Fun], body: H.Body) => {
+        var _f2fvs: MMap[Symbol, Set[Symbol]] = MMap.from(f2fvs) // mutable copy!
+        fvFuns(funs)(using _f2fvs) // enlarge `_f2fvs`; do not care about return value
+        /*
         val (closedFuns, mappings) = funs.map {
           case H.Fun(f: Symbol, retC: H.Name, args: Seq[H.Name], e: H.Body) => {
             val w   = Symbol.fresh("w")
@@ -75,7 +88,7 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
              f -> (w, fvs))
           }
         }.unzip
-
+        */
         var WIP: L.Tree = h2lVal(body) 
         for ((f, (w, fvs)) <- mappings) {
           for ((fv, index) <- fvs.zipWithIndex) {
@@ -289,10 +302,38 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
     val tmp = Symbol.fresh("t")
     L.LetP(tmp, p, args, body(tmp))
   }
-
-  //private def h2lFun()
-
-  private def fv(tree: H.Tree): Set[Symbol] = tree match {
+  /**
+    * 
+    *
+    * @param funs  function definitions, possibly (mutually) recursive
+    * @param f2fvs mutable map from "known" function to free variables
+    * @return
+    */
+  private def fvFuns(funs: Seq[H.Fun])
+                    (using f2fvs: MMap[Symbol, Set[Symbol]]): Map[Symbol, Set[Symbol]] = {
+    // must use immutable map
+    var previous: Map[Symbol, Set[Symbol]] = Map()
+    var current : Map[Symbol, Set[Symbol]] = funs.map(fun => (fun.name -> Set())).toMap
+    while (current != previous) {
+      previous = current
+      for (H.Fun(f, _, as, e) <- funs) {
+        current = current.updated(f, fv(e)(using f2fvs ++ previous) - f diff as.toSet)
+      }
+    }
+    f2fvs ++= current // update `f2fvs`
+    current           // return free variables of target functions
+  }
+  /**
+    * 
+    *
+    * @param tree
+    * @param f2fvs map from "knwon" function to free variables
+    *      It does not matter if the map is mutable or not, but for simplicity,
+    *      a mutable version is adopted.
+    * @param f2w map from "known" function to worker
+    * @return
+    */
+  private def fv(tree: H.Tree)(using f2fvs: MMap[Symbol, Set[Symbol]]): Set[Symbol] = tree match {
     case H.LetP(n: H.Name, _, args: Seq[H.Atom], b: H.Body) =>
       (fv(b) excl n) union args.flatMap(fvAtom(_)).toSet
     case H.LetC(cnts: Seq[H.Cnt], body: H.Body) =>
@@ -300,15 +341,30 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
         case H.Cnt(_, args: Seq[H.Name], e: H.Body) =>
           fv(e) diff args.toSet
       }.toSet
-    case H.LetF(funs: Seq[H.Fun], body: H.Body) =>
-      fv(body) union funs.flatMap {
-        case H.Fun(_, _ ,args: Seq[H.Name], e: H.Body) =>
-          fv(e) diff args.toSet
-      }.toSet diff funs.map(_.name).toSet // Must `diff` lie on the same line as operands?
+    case H.LetF(funs: Seq[H.Fun], body: H.Body) => {
+      var _f2fvs: MMap[Symbol, Set[Symbol]] = f2fvs.clone() // use copy to avoid modifying the original one
+      val funfvs: Map[Symbol, Set[Symbol]]  = fvFuns(funs)(using _f2fvs) // enlarge `_f2fvs`
+      val allfvs: Set[Symbol] = funfvs.values.flatten.toSet
+      allfvs union fv(body)(using _f2fvs) diff funs.map(_.name).toSet
+    }
     case H.AppC(_, args: Seq[H.Atom]) =>
       args.flatMap(fvAtom(_)).toSet
-    case H.AppF(fun: H.Atom, _, args: Seq[H.Atom]) =>
-      fvAtom(fun) union args.flatMap(fvAtom(_)).toSet
+    case H.AppF(fun: H.Atom, _, args: Seq[H.Atom]) => {
+      val fvs = f2fvs.get(fun.asInstanceOf[Symbol]) // correct?
+      fvs match {
+        case None =>
+          fvAtom(fun) union args.flatMap(fvAtom(_)).toSet
+        case Some(fvs) =>
+          /* Suppose `f` invokes `g`. If `g` is "known", then `g` itself is not
+           * a free variable of `f`. Instead, the free variables of `g` are
+           * added to `f`'s.
+           * 
+           * If there is a value corresponding to the key `fun` in `f2fvs`,
+           * then `fun` is "known".
+           */
+          fvs union args.flatMap(fvAtom(_)).toSet
+      }
+    }
     case H.If(_, args: Seq[H.Atom], _, _) =>
       args.flatMap(fvAtom(_)).toSet
     case H.Halt(a: H.Atom) =>
