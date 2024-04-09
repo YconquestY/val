@@ -19,7 +19,7 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
     * 
     *
     * @param tree
-    * @param f2fvs immutable map from "knwon" function to free variables
+    * @param f2fvs immutable map from "known" function to free variables
     * @param f2w   map from "known" function to worker
     * @return
     */
@@ -53,7 +53,7 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
           L.Halt(rewriteAtom(a))
       }
     }
-    
+    /*
     def extractEnv(env: Symbol, body: H.Tree)
                   (substitutions: Subst[Symbol], fvs: Seq[Symbol]): L.Tree =
       fvs match {
@@ -62,6 +62,17 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
         case fv +: fvs =>
           tmpLetP(CPSV.BlockGet, Seq(env, substitutions.size), { // `substition` is initially "f -> env" with size 1.
             (v: L.Name) => extractEnv(env, body)(substitutions + (fv -> v), fvs)
+          })
+      }
+    */
+    def extractEnv(env: Symbol, w: Symbol, c: Symbol, args: Seq[Symbol], numfvs: Int)
+                  (vs: Seq[Symbol]): L.Body =
+      vs.size match {
+        case i if i == numfvs =>
+          L.AppF(w, c, args ++ vs)
+        case i if i < numfvs =>
+          tmpLetP(CPSV.BlockGet, Seq(env, vs.size + 1), { // `vs` is initially empty with size 0.
+            (v: L.Name) => extractEnv(env, w, c, args, numfvs)(vs :+ v)
           })
       }
 
@@ -75,8 +86,30 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
         L.AppC(cnt, args.map(rewrite(_)))
       // function
       case H.LetF(funs: Seq[H.Fun], body: H.Body) => {
-        var _f2fvs: MMap[Symbol, Set[Symbol]] = MMap.from(f2fvs) // mutable copy!
+        val _f2fvs: MMap[Symbol, Set[Symbol]] = MMap.from(f2fvs) // mutable copy!
         fvFuns(funs)(using _f2fvs) // enlarge `_f2fvs`; do not care about return value
+        val __f2fvs = Map.from(_f2fvs); // convert back to immutable `Map`
+        
+        val ws: Map[Symbol, Symbol] = funs.map(_.name -> Symbol.fresh("w")).toMap;
+        val (workers, wrappers, mappings) = funs.map {
+          case H.Fun(f: Symbol, retC: H.Name, args: Seq[H.Name], e: H.Body) => {
+            // worker
+            val fvs: Seq[Symbol]   = __f2fvs(f).toSeq
+            val us : Seq[Symbol]   = fvs.map(_ => Symbol.fresh("u"))
+            val sub: Subst[Symbol] = (fvs zip us).foldLeft(emptySubst)((acc, kv) => acc + kv)
+            val worker = L.Fun(ws(f), retC, args ++ us, substitute(h2lVal(e)
+                                                                         (using __f2fvs, f2w ++ ws))
+                                                                  (using sub))
+            // wrapper
+            val s = Symbol.fresh("s")
+            val c = Symbol.fresh("c")
+            val env = Symbol.fresh("env")
+            val _args = args.map((_) => Symbol.fresh("args"))
+            val wrapper = L.Fun(s, c, env +: _args, extractEnv(env, ws(f), c, _args, fvs.size)
+                                                              (Seq.empty[Symbol]))
+            (worker, wrapper, f -> (s, fvs))
+          }
+        }.unzip3
         /*
         val (closedFuns, mappings) = funs.map {
           case H.Fun(f: Symbol, retC: H.Name, args: Seq[H.Name], e: H.Body) => {
@@ -89,24 +122,31 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
           }
         }.unzip
         */
-        var WIP: L.Tree = h2lVal(body) 
-        for ((f, (w, fvs)) <- mappings) {
+        var WIP: L.Body = h2lVal(body)(using __f2fvs, f2w ++ ws)
+        for ((f, (s, fvs)) <- mappings) {
           for ((fv, index) <- fvs.zipWithIndex) {
             WIP = L.LetP(Symbol.fresh("t"), CPSV.BlockSet, Seq(f, index + 1, fv), WIP)
           }
-          WIP = L.LetP(Symbol.fresh("t"), CPSV.BlockSet, Seq(f, 0, w), WIP)
+          WIP = L.LetP(Symbol.fresh("t"), CPSV.BlockSet, Seq(f, 0, s), WIP)
         }
-        for ((f, (w, fvs)) <- mappings) {
+        for ((f, (_, fvs)) <- mappings) {
           WIP = L.LetP(f, CPSV.BlockAlloc, Seq(BlockTag.Function, fvs.size + 1), WIP)
         }
 
-        L.LetF(closedFuns, WIP)
+        L.LetF(workers ++ wrappers, WIP)
       }
       case H.AppF(fun: H.Name, retC: H.Name, args: Seq[H.Atom]) => {
-        val f = Symbol.fresh("f")
-        val rewrittenFun = rewrite(fun)
-        L.LetP(f, CPSV.BlockGet, Seq(rewrittenFun, 0),
-               L.AppF(f, retC, rewrittenFun +: args.map(rewrite(_))))
+        val _w = f2w.get(fun)
+        _w match {
+          case None => {
+            val f = Symbol.fresh("f")
+            val rewrittenFun = rewrite(fun)
+            L.LetP(f, CPSV.BlockGet, Seq(rewrittenFun, 0),
+                   L.AppF(f, retC, rewrittenFun +: args.map(rewrite(_))))
+          }
+          case Some(w) =>
+            L.AppF(w, retC, args.map(rewrite(_)) ++ f2fvs(fun))
+        }
       }
       // arithmetics
       // +
@@ -342,10 +382,10 @@ object CPSValueRepresenter extends (H.Tree => L.Tree) {
           fv(e) diff args.toSet
       }.toSet
     case H.LetF(funs: Seq[H.Fun], body: H.Body) => {
-      var _f2fvs: MMap[Symbol, Set[Symbol]] = f2fvs.clone() // use copy to avoid modifying the original one
+      val _f2fvs: MMap[Symbol, Set[Symbol]] = f2fvs.clone() // use copy to avoid modifying the original one
       val funfvs: Map[Symbol, Set[Symbol]]  = fvFuns(funs)(using _f2fvs) // enlarge `_f2fvs`
       val allfvs: Set[Symbol] = funfvs.values.flatten.toSet
-      allfvs union fv(body)(using _f2fvs) diff funs.map(_.name).toSet
+      fv(body)(using _f2fvs) union allfvs diff funs.map(_.name).toSet
     }
     case H.AppC(_, args: Seq[H.Atom]) =>
       args.flatMap(fvAtom(_)).toSet
